@@ -3,7 +3,7 @@ package org.kreyzon.stripe.dto;
 import lombok.Data;
 
 @Data
-public class PaymentRequest {
+public class CreatePaymentRequest {
     private Long amount;
     private Long quantity;
     private String currency;

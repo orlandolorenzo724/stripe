@@ -27,10 +27,11 @@ package org.kreyzon.stripe.service;
 
 import com.stripe.Stripe;
 import com.stripe.exception.StripeException;
-import com.stripe.model.PaymentIntent;
-import com.stripe.param.PaymentIntentCaptureParams;
-import org.kreyzon.stripe.dto.PaymentResponse;
-import org.kreyzon.stripe.dto.PaymentRequest;
+import lombok.extern.slf4j.Slf4j;
+import org.kreyzon.stripe.dto.CapturePaymentResponse;
+import org.kreyzon.stripe.dto.CreatePaymentResponse;
+import org.kreyzon.stripe.dto.StripeResponse;
+import org.kreyzon.stripe.dto.CreatePaymentRequest;
 import org.kreyzon.stripe.utils.Constant;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -38,40 +39,39 @@ import org.springframework.stereotype.Service;
 import com.stripe.model.checkout.Session;
 import com.stripe.param.checkout.SessionCreateParams;
 
-import java.util.Map;
-
 /**
  * Service class for Stripe API calls.
  *
  * @author Lorenzo Orlando
  */
 @Service
+@Slf4j
 public class StripeService {
 
     @Value("${stripe.secretKey}")
     private String secretKey;
 
     /**
-     * Creates a new payment intent.
+     * Creates a new payment.
      *
-     * @param paymentRequest Payment request object
+     * @param createPaymentRequest Payment request object
      * @return Payment response object
      */
-    public PaymentResponse createPaymentIntent(PaymentRequest paymentRequest) {
+    public StripeResponse createPayment(CreatePaymentRequest createPaymentRequest) {
         // Set your secret key. Remember to switch to your live secret key in production!
         Stripe.apiKey = secretKey;
 
         // Create a PaymentIntent with the order amount and currency
         SessionCreateParams.LineItem.PriceData.ProductData productData =
                 SessionCreateParams.LineItem.PriceData.ProductData.builder()
-                        .setName(paymentRequest.getName())
+                        .setName(createPaymentRequest.getName())
                         .build();
 
         // Create new line item with the above product data and associated price
         SessionCreateParams.LineItem.PriceData priceData =
                 SessionCreateParams.LineItem.PriceData.builder()
-                        .setCurrency(paymentRequest.getCurrency())
-                        .setUnitAmount(paymentRequest.getAmount())
+                        .setCurrency(createPaymentRequest.getCurrency())
+                        .setUnitAmount(createPaymentRequest.getAmount())
                         .setProductData(productData)
                         .build();
 
@@ -79,7 +79,7 @@ public class StripeService {
         SessionCreateParams.LineItem lineItem =
                 SessionCreateParams
                         .LineItem.builder()
-                        .setQuantity(paymentRequest.getQuantity())
+                        .setQuantity(createPaymentRequest.getQuantity())
                         .setPriceData(priceData)
                         .build();
 
@@ -87,57 +87,71 @@ public class StripeService {
         SessionCreateParams params =
                 SessionCreateParams.builder()
                         .setMode(SessionCreateParams.Mode.PAYMENT)
-                        .setSuccessUrl(paymentRequest.getSuccessUrl())
-                        .setCancelUrl(paymentRequest.getCancelUrl())
+                        .setSuccessUrl(createPaymentRequest.getSuccessUrl())
+                        .setCancelUrl(createPaymentRequest.getCancelUrl())
                         .addLineItem(lineItem)
                         .build();
 
         // Create new session
-        Session session = null;
+        Session session;
         try {
             session = Session.create(params);
         } catch (StripeException e) {
             e.printStackTrace();
-            return PaymentResponse
+            return StripeResponse
                     .builder()
-                    .status(Constant.SUCCESS)
+                    .status(Constant.FAILURE)
                     .message("Payment session creation failed")
                     .httpStatus(400)
                     .data(null)
                     .build();
         }
 
-        Map<String, String> responseData = session.getMetadata();
-        responseData.put("sessionId", session.getId());
-        responseData.put("sessionUrl", session.getUrl());
-
-        return PaymentResponse
+        CreatePaymentResponse responseData = CreatePaymentResponse
                 .builder()
-                .status(Constant.FAILURE)
+                .sessionId(session.getId())
+                .sessionUrl(session.getUrl())
+                .build();
+
+        return StripeResponse
+                .builder()
+                .status(Constant.SUCCESS)
                 .message("Payment session created successfully")
                 .httpStatus(200)
                 .data(responseData)
                 .build();
     }
 
-    public PaymentResponse capturePayment(String paymentIntentId) {
+    public StripeResponse capturePayment(String sessionId) {
         Stripe.apiKey = secretKey;
 
         try {
-            PaymentIntent paymentIntent = PaymentIntent.retrieve(paymentIntentId);
-            PaymentIntentCaptureParams params = PaymentIntentCaptureParams.builder().build();
-            paymentIntent.capture(params);
-            return PaymentResponse
+            Session session = Session.retrieve(sessionId);
+            String status = session.getStatus();
+
+            if (status.equalsIgnoreCase(Constant.STRIPE_SESSION_STATUS_SUCCESS)) {
+                // Handle logic for successful payment
+                log.info("Payment successfully captured.");
+            }
+
+            CapturePaymentResponse responseData = CapturePaymentResponse
+                    .builder()
+                    .sessionId(sessionId)
+                    .sessionStatus(status)
+                    .paymentStatus(session.getPaymentStatus())
+                    .build();
+
+            return StripeResponse
                     .builder()
                     .status(Constant.SUCCESS)
                     .message("Payment successfully captured.")
                     .httpStatus(200)
-                    .data(paymentIntent)
+                    .data(responseData)
                     .build();
         } catch (StripeException e) {
             // Handle capture failure, log the error, and return false
             e.printStackTrace();
-            return PaymentResponse
+            return StripeResponse
                     .builder()
                     .status(Constant.FAILURE)
                     .message("Payment capture failed due to a server error.")
